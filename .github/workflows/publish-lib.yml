@@ -1,0 +1,36 @@
+name: CD - Publish Library
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    name: Publish rfc7807-errors
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js v22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Library
+        run: pnpm build:lib
+
+      - name: Publish Library (Dry Run)
+        run: pnpm publish --filter @xavierdev25/rfc7807-errors --dry-run

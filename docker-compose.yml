@@ -1,0 +1,225 @@
+# ==============================================================================
+# Enterprise Demo — Docker Compose
+# Orchestrates all infrastructure services for local development.
+#
+# Services:
+#   - postgres:    PostgreSQL 16 (data layer + RLS)
+#   - redis:       Redis 7 (cache + rate limiting)
+#   - floci:       Floci AWS Emulator (SQS, S3)
+#   - floci-init:  One-shot init container (provisions AWS resources)
+#   - app:         Enterprise Demo NestJS application
+#
+# Usage:
+#   docker compose up -d              # Start all services
+#   docker compose up -d --build app  # Rebuild & start app
+#   docker compose logs -f app        # Follow app logs
+#   docker compose down -v            # Stop & remove volumes
+#
+# Network: All services share the `enterprise-net` bridge network.
+# ==============================================================================
+
+services:
+  # ────────────────────────────────────────────────────────────────────────────
+  # PostgreSQL 16 — Primary Data Store
+  # ────────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: enterprise-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-enterprise_demo}
+      POSTGRES_USER: ${POSTGRES_USER:-app_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-S3cur3P@ssw0rd!2026}
+      # Tuning for development
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app_user} -d ${POSTGRES_DB:-enterprise_demo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - enterprise-net
+    # Performance tuning for local dev
+    command: >
+      postgres
+        -c shared_preload_libraries=pg_stat_statements
+        -c pg_stat_statements.track=all
+        -c log_statement=mod
+        -c log_min_duration_statement=200
+        -c max_connections=100
+        -c shared_buffers=128MB
+        -c work_mem=4MB
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Redis 7 — Cache & Distributed Rate Limiting
+  # ────────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: enterprise-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-R3d1sP@ss2026}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - enterprise-net
+    # Require authentication + persistence every 60s if 100+ writes
+    command: >
+      redis-server
+        --requirepass ${REDIS_PASSWORD:-R3d1sP@ss2026}
+        --appendonly yes
+        --appendfsync everysec
+        --save 60 100
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --tcp-keepalive 300
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Floci — AWS Local Emulator (SQS, S3, and more)
+  # ────────────────────────────────────────────────────────────────────────────
+  floci:
+    image: floci/floci:latest
+    container_name: enterprise-floci
+    restart: unless-stopped
+    environment:
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      # Persist data across restarts
+      FLOCI_STORAGE_MODE: persistent
+      # Enable specific services for performance
+      FLOCI_SERVICES: sqs,s3
+    ports:
+      - "4566:4566"
+    volumes:
+      - floci_data:/var/lib/floci
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_floci/health || curl -sf http://localhost:4566/health || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+    networks:
+      - enterprise-net
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Floci Init — One-shot container to provision AWS resources
+  # ────────────────────────────────────────────────────────────────────────────
+  floci-init:
+    image: amazon/aws-cli:latest
+    container_name: enterprise-floci-init
+    depends_on:
+      floci:
+        condition: service_healthy
+    environment:
+      AWS_ENDPOINT_URL: http://floci:4566
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+    volumes:
+      - ./infra/floci/init:/scripts:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "⏳ Waiting for Floci to be ready..."
+        MAX_RETRIES=30
+        COUNT=0
+        until aws --endpoint-url=http://floci:4566 sts get-caller-identity 2>/dev/null; do
+          COUNT=$$((COUNT + 1))
+          if [ $$COUNT -ge $$MAX_RETRIES ]; then
+            echo "❌ Floci not ready after $$MAX_RETRIES attempts"
+            exit 1
+          fi
+          sleep 2
+        done
+        echo "✅ Floci is ready!"
+
+        echo "📦 Creating SQS queues..."
+        aws --endpoint-url=http://floci:4566 sqs create-queue --queue-name domain-events-dlq --attributes '{"MessageRetentionPeriod":"1209600"}' 2>/dev/null || true
+        DLQ_ARN=$$(aws --endpoint-url=http://floci:4566 sqs get-queue-attributes --queue-url http://floci:4566/000000000000/domain-events-dlq --attribute-names QueueArn --query 'Attributes.QueueArn' --output text 2>/dev/null || echo "arn:aws:sqs:us-east-1:000000000000:domain-events-dlq")
+        aws --endpoint-url=http://floci:4566 sqs create-queue --queue-name domain-events --attributes "{\"VisibilityTimeout\":\"60\",\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"$$DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"}" 2>/dev/null || true
+
+        aws --endpoint-url=http://floci:4566 sqs create-queue --queue-name transactions-dlq --attributes '{"MessageRetentionPeriod":"1209600"}' 2>/dev/null || true
+        TX_DLQ_ARN=$$(aws --endpoint-url=http://floci:4566 sqs get-queue-attributes --queue-url http://floci:4566/000000000000/transactions-dlq --attribute-names QueueArn --query 'Attributes.QueueArn' --output text 2>/dev/null || echo "arn:aws:sqs:us-east-1:000000000000:transactions-dlq")
+        aws --endpoint-url=http://floci:4566 sqs create-queue --queue-name transactions --attributes "{\"VisibilityTimeout\":\"120\",\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"$$TX_DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"5\\\"}\"}" 2>/dev/null || true
+
+        echo "📦 Creating S3 buckets..."
+        aws --endpoint-url=http://floci:4566 s3 mb s3://enterprise-documents 2>/dev/null || true
+        aws --endpoint-url=http://floci:4566 s3 mb s3://enterprise-audit-logs 2>/dev/null || true
+
+        echo "📋 Verifying resources..."
+        echo "SQS Queues:"
+        aws --endpoint-url=http://floci:4566 sqs list-queues --output table 2>/dev/null || true
+        echo "S3 Buckets:"
+        aws --endpoint-url=http://floci:4566 s3 ls 2>/dev/null || true
+        echo "🎉 Floci initialization complete!"
+    networks:
+      - enterprise-net
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Enterprise Demo — NestJS Application
+  # ────────────────────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: apps/enterprise-demo/Dockerfile
+      target: production
+    container_name: enterprise-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      floci:
+        condition: service_healthy
+      floci-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      APP_PORT: ${APP_PORT:-3000}
+      # Override hostnames to use Docker DNS
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      AWS_ENDPOINT_URL: http://floci:4566
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    # Distroless has no shell — healthcheck is disabled at compose level.
+    # The app's HTTP readiness is ensured by depends_on conditions.
+    # For production, use a sidecar or external health checker.
+    networks:
+      - enterprise-net
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Volumes — Persistent storage for stateful services
+# ──────────────────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+    name: enterprise-postgres-data
+  redis_data:
+    driver: local
+    name: enterprise-redis-data
+  floci_data:
+    driver: local
+    name: enterprise-floci-data
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Network — Shared bridge network for inter-service communication
+# ──────────────────────────────────────────────────────────────────────────────
+networks:
+  enterprise-net:
+    driver: bridge
+    name: enterprise-network

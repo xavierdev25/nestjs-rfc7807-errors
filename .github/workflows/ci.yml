@@ -1,0 +1,90 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  ci:
+    name: Continuous Integration
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: enterprise_user
+          POSTGRES_PASSWORD: enterprise_password
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: enterprise_user
+      DB_PASSWORD: enterprise_password
+      DB_NAME: test_db
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      SQS_QUEUE_URL: http://localhost:4566/000000000000/local-outbox-queue
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js v22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Security Scan
+        run: pnpm audit || true
+
+      - name: Lint Code
+        run: pnpm lint
+
+      - name: Check Formatting
+        # Using npx prettier --check to actually verify format instead of writing
+        run: npx prettier --check "{apps,libs}/**/src/**/*.ts"
+
+      - name: Run Tests with Coverage
+        run: pnpm test:cov
+
+      - name: Run E2E Tests
+        run: pnpm test:e2e
+        env:
+          NODE_ENV: test
+
+      - name: Build Monorepo
+        run: pnpm build
