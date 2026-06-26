@@ -6,11 +6,11 @@ import {
   NestInterceptor,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Observable, of, throwError } from 'rxjs';
-import { catchError, map } from 'rxjs/operators';
+import { Observable, from, of, throwError } from 'rxjs';
+import { catchError, mergeMap } from 'rxjs/operators';
 import { Request, Response } from 'express';
 import { IDEMPOTENT_KEY } from './idempotent.decorator';
-import { IdempotencyService, LockStatus } from './idempotency.service';
+import { IdempotencyService } from './idempotency.service';
 import { RequestContext } from '../context/request-context';
 import {
   BadRequestProblem,
@@ -88,8 +88,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
 
     // 2. Try to acquire the lock
-    const lockStatus = await this.idempotencyService.acquireLock(scopedKey);
-    if (lockStatus === LockStatus.ALREADY_LOCKED) {
+    const lockToken = await this.idempotencyService.acquireLock(scopedKey);
+    if (lockToken === null) {
       throw new ConflictProblem({
         detail:
           'A request with this idempotency key is currently being processed. Please retry later.',
@@ -98,25 +98,48 @@ export class IdempotencyInterceptor implements NestInterceptor {
       });
     }
 
-    // 3. Execute the handler, cache the response, and release the lock
+    // 3. Execute the handler, cache the response, and release the lock.
+    //    `mergeMap` (not `map`) is required so the async work is awaited and the
+    //    resolved body — not a Promise — is emitted downstream to the client.
     return next.handle().pipe(
-      map(async (body) => {
-        const statusCode = response.statusCode;
-        await this.idempotencyService.storeResponse(
-          scopedKey,
-          { statusCode, body },
-          idempotentMeta.ttlSeconds,
-        );
-        await this.idempotencyService.releaseLock(scopedKey);
-        return body;
-      }),
-      // Unwrap the inner promise from map
-      map((promise) => promise),
-      catchError(async (error) => {
-        // Release lock on error so retries are possible
-        await this.idempotencyService.releaseLock(scopedKey);
-        return throwError(() => error);
-      }),
+      mergeMap((body) =>
+        from(
+          this.persistAndRelease(
+            scopedKey,
+            lockToken,
+            response,
+            body,
+            idempotentMeta.ttlSeconds,
+          ),
+        ),
+      ),
+      catchError((error) =>
+        // Release the lock on error so legitimate retries can proceed.
+        from(this.idempotencyService.releaseLock(scopedKey, lockToken)).pipe(
+          mergeMap(() => throwError(() => error)),
+        ),
+      ),
     );
+  }
+
+  /**
+   * Caches the successful response and releases the owned lock, returning the
+   * original body to the client.
+   */
+  private async persistAndRelease(
+    scopedKey: string,
+    lockToken: string,
+    response: Response,
+    body: unknown,
+    ttlSeconds: number,
+  ): Promise<unknown> {
+    const statusCode = response.statusCode;
+    await this.idempotencyService.storeResponse(
+      scopedKey,
+      { statusCode, body },
+      ttlSeconds,
+    );
+    await this.idempotencyService.releaseLock(scopedKey, lockToken);
+    return body;
   }
 }

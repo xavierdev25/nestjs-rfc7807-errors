@@ -18,6 +18,8 @@ echo "🔧 [init-db] Initializing PostgreSQL for Enterprise Demo..."
 DB_NAME="${POSTGRES_DB:-enterprise_demo}"
 TEST_DB_NAME="test_db"
 DB_USER="${POSTGRES_USER:-app_user}"
+# Observer role password — overridable via environment, never hardcode secrets.
+OBSERVER_PASSWORD="${OBSERVER_PASSWORD:-observer_readonly_2026}"
 
 echo "Creating test database: $TEST_DB_NAME"
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "postgres" <<-EOSQL
@@ -102,7 +104,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$DB_NAME" <<-EOSQL
     DO \$\$
     BEGIN
         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'readonly_observer') THEN
-            CREATE ROLE readonly_observer WITH LOGIN PASSWORD 'observer_readonly_2026';
+            CREATE ROLE readonly_observer WITH LOGIN PASSWORD '${OBSERVER_PASSWORD}';
             GRANT CONNECT ON DATABASE ${DB_NAME} TO readonly_observer;
             GRANT USAGE ON SCHEMA public TO readonly_observer;
             ALTER DEFAULT PRIVILEGES IN SCHEMA public

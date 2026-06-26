@@ -10,6 +10,13 @@ export class OutboxRelayProcessor {
   private readonly logger = new Logger(OutboxRelayProcessor.name);
   private isProcessing = false;
 
+  /**
+   * Maximum publish attempts before an event is considered poisoned and parked
+   * in FAILED for manual/operator inspection. Transient broker errors below
+   * this threshold leave the event PENDING so the next tick retries it.
+   */
+  private readonly MAX_ATTEMPTS = 5;
+
   constructor(
     @InjectRepository(OutboxEvent)
     private readonly outboxRepository: Repository<OutboxEvent>,
@@ -70,16 +77,25 @@ export class OutboxRelayProcessor {
         event.publishedAt = new Date();
         await this.outboxRepository.save(event);
       } catch (error) {
-        this.logger.error(
-          `Failed to publish event ${event.id}`,
-          error instanceof Error ? error.stack : error,
-        );
-
-        // Mark as failed so we don't infinitely retry or we could leave it as pending to retry later.
-        // For a robust system, you'd add retry counts. Here we mark as FAILED with error reason.
-        event.status = OutboxEventStatus.FAILED;
+        event.attempts += 1;
         event.errorReason =
           error instanceof Error ? error.message : 'Unknown error';
+
+        if (event.attempts >= this.MAX_ATTEMPTS) {
+          // Poisoned message: stop retrying and park it for operator review.
+          event.status = OutboxEventStatus.FAILED;
+          this.logger.error(
+            `Giving up on event ${event.id} after ${event.attempts} attempts`,
+            error instanceof Error ? error.stack : error,
+          );
+        } else {
+          // Transient failure: keep it PENDING so the next tick retries it,
+          // preserving at-least-once delivery instead of silently dropping it.
+          this.logger.warn(
+            `Publish attempt ${event.attempts}/${this.MAX_ATTEMPTS} failed for event ${event.id}; will retry.`,
+          );
+        }
+
         await this.outboxRepository.save(event);
       }
     }

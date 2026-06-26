@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   Index,
+  VersionColumn,
 } from 'typeorm';
 import {
   TransactionStatus,
@@ -70,6 +71,14 @@ export class TransactionEntity {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
+
+  /**
+   * Optimistic concurrency token. TypeORM increments it on every UPDATE and
+   * rejects writes against a stale version, preventing two concurrent
+   * "process" requests from double-charging the same transaction.
+   */
+  @VersionColumn()
+  version!: number;
 
   // ─── Domain Methods ──────────────────────────────────────────────────
 

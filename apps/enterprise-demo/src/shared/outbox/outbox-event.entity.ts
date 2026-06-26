@@ -35,6 +35,13 @@ export class OutboxEvent {
   })
   status: OutboxEventStatus;
 
+  /**
+   * Number of failed publish attempts. The relay keeps an event PENDING and
+   * retries it until this reaches MAX_ATTEMPTS, only then giving up (FAILED).
+   */
+  @Column({ type: 'int', default: 0 })
+  attempts: number;
+
   @Column({ type: 'text', nullable: true })
   errorReason: string | null;
 

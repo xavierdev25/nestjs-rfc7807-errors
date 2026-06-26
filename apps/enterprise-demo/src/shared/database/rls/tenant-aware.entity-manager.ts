@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { RequestContext } from '../../context/request-context';
+import { RLS_APP_ROLE } from './rls.constants';
 
 /**
  * Tenant-aware EntityManager wrapper.
@@ -28,8 +29,17 @@ export class TenantAwareEntityManager {
   ): Promise<T> {
     const tenantId = RequestContext.currentTenantId();
     const userId = RequestContext.currentUserId();
+    const isPostgres = this.dataSource.options.type === 'postgres';
 
     return this.dataSource.transaction(async (manager: EntityManager) => {
+      // Drop superuser/owner privileges for the duration of this transaction so
+      // RLS policies are actually enforced. SET LOCAL ROLE is transaction-scoped
+      // and reverts on COMMIT/ROLLBACK, so it is pool-safe. Without this, the
+      // admin connection (a superuser) would silently bypass every policy.
+      if (isPostgres) {
+        await manager.query(`SET LOCAL ROLE ${RLS_APP_ROLE}`);
+      }
+
       // Set RLS session variables scoped to this transaction
       if (tenantId) {
         await manager.query(

@@ -1,4 +1,4 @@
-import { IdempotencyService, LockStatus } from '../idempotency.service';
+import { IdempotencyService } from '../idempotency.service';
 
 describe('IdempotencyService', () => {
   let service: IdempotencyService;
@@ -9,6 +9,7 @@ describe('IdempotencyService', () => {
       set: jest.fn(),
       get: jest.fn(),
       del: jest.fn(),
+      eval: jest.fn(),
     };
 
     service = new IdempotencyService(mockRedis as any);
@@ -22,37 +23,48 @@ describe('IdempotencyService', () => {
   });
 
   describe('acquireLock', () => {
-    it('should return ACQUIRED when SET NX succeeds', async () => {
+    it('should return a unique token when SET NX succeeds', async () => {
       mockRedis.set.mockResolvedValue('OK');
 
-      const result = await service.acquireLock('test-key');
+      const token = await service.acquireLock('test-key');
 
-      expect(result).toBe(LockStatus.ACQUIRED);
+      expect(typeof token).toBe('string');
+      expect(token).not.toBeNull();
+      // SET idem:lock:test-key <token> EX 30 NX
       expect(mockRedis.set).toHaveBeenCalledWith(
         'idem:lock:test-key',
-        'processing',
+        token,
         'EX',
         30,
         'NX',
       );
     });
 
-    it('should return ALREADY_LOCKED when SET NX fails', async () => {
+    it('should return null when the key is already locked', async () => {
       mockRedis.set.mockResolvedValue(null);
 
-      const result = await service.acquireLock('test-key');
+      const token = await service.acquireLock('test-key');
 
-      expect(result).toBe(LockStatus.ALREADY_LOCKED);
+      expect(token).toBeNull();
+    });
+
+    it('should issue a different token on each acquisition', async () => {
+      mockRedis.set.mockResolvedValue('OK');
+
+      const first = await service.acquireLock('key');
+      const second = await service.acquireLock('key');
+
+      expect(first).not.toEqual(second);
     });
 
     it('should accept custom lock TTL', async () => {
       mockRedis.set.mockResolvedValue('OK');
 
-      await service.acquireLock('key', 60);
+      const token = await service.acquireLock('key', 60);
 
       expect(mockRedis.set).toHaveBeenCalledWith(
         'idem:lock:key',
-        'processing',
+        token,
         'EX',
         60,
         'NX',
@@ -61,12 +73,26 @@ describe('IdempotencyService', () => {
   });
 
   describe('releaseLock', () => {
-    it('should delete the lock key', async () => {
-      mockRedis.del.mockResolvedValue(1);
+    it('should compare-and-delete only the owned lock (returns true)', async () => {
+      mockRedis.eval.mockResolvedValue(1);
 
-      await service.releaseLock('test-key');
+      const released = await service.releaseLock('test-key', 'my-token');
 
-      expect(mockRedis.del).toHaveBeenCalledWith('idem:lock:test-key');
+      expect(released).toBe(true);
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining('redis.call'),
+        1,
+        'idem:lock:test-key',
+        'my-token',
+      );
+    });
+
+    it('should not delete a lock owned by another acquisition (returns false)', async () => {
+      mockRedis.eval.mockResolvedValue(0);
+
+      const released = await service.releaseLock('test-key', 'stale-token');
+
+      expect(released).toBe(false);
     });
   });
 

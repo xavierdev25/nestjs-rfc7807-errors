@@ -1,5 +1,7 @@
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
 import { Inject, Logger } from '@nestjs/common';
+import { OptimisticLockVersionMismatchError } from 'typeorm';
+import { ConflictProblem } from '@xavierdev25/rfc7807-errors';
 import { ProcessTransactionCommand } from './process-transaction.command';
 import {
   TransactionRepositoryPort,
@@ -50,20 +52,33 @@ export class ProcessTransactionHandler implements ICommandHandler<
       throw new TransactionNotFoundError(command.transactionId);
     }
 
-    // Transition to PROCESSING
+    // Transition to PROCESSING. This is the concurrency gate: if another
+    // request already moved this transaction forward, the optimistic-lock
+    // version check fails here and we reject with a 409 instead of
+    // double-processing (and potentially double-charging).
     transaction.markAsProcessing();
-    await this.tenantManager.executeInTenantContext(async (manager) => {
-      const repo = manager.getRepository(TransactionEntity);
-      await repo.save(transaction);
+    try {
+      await this.tenantManager.executeInTenantContext(async (manager) => {
+        const repo = manager.getRepository(TransactionEntity);
+        await repo.save(transaction);
 
-      await this.outboxService.saveEvent(
-        manager,
-        transaction.id,
-        'Transaction',
-        'TransactionProcessingEvent',
-        { status: transaction.status },
-      );
-    });
+        await this.outboxService.saveEvent(
+          manager,
+          transaction.id,
+          'Transaction',
+          'TransactionProcessingEvent',
+          { status: transaction.status },
+        );
+      });
+    } catch (error) {
+      if (error instanceof OptimisticLockVersionMismatchError) {
+        throw new ConflictProblem({
+          detail: `Transaction ${transaction.id} is already being processed by a concurrent request.`,
+          instance: `/transactions/${transaction.id}/process`,
+        });
+      }
+      throw error;
+    }
 
     // Call the payment gateway
     try {

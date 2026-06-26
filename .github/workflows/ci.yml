@@ -69,7 +69,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Security Scan
-        run: pnpm audit || true
+        # Fail the build on high/critical advisories; informational/low do not block.
+        run: pnpm audit --audit-level high
 
       - name: Lint Code
         run: pnpm lint

@@ -9,7 +9,7 @@ export const databaseConfig = (
   configService: ConfigService,
 ): TypeOrmModuleOptions => {
   const isTest = configService.get<string>('NODE_ENV') === 'test';
-  
+
   return {
     type: 'postgres',
     host: configService.get<string>(
@@ -34,17 +34,19 @@ export const databaseConfig = (
     ),
     ssl: configService.get<string>('POSTGRES_SSL', 'false') === 'true',
     autoLoadEntities: true,
-    synchronize: isTest || configService.get<string>('NODE_ENV', 'development') === 'development',
+    synchronize:
+      isTest ||
+      configService.get<string>('NODE_ENV', 'development') === 'development',
     dropSchema: isTest, // Clean db completely on tests
     logging:
       configService.get<string>('NODE_ENV', 'development') === 'development'
         ? ['error', 'warn', 'migration']
         : ['error'],
-  // Connection pool settings
-  extra: {
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
-  },
+    // Connection pool settings
+    extra: {
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    },
   };
 };

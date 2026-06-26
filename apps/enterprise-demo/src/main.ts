@@ -1,7 +1,34 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
 import { AppModule } from './app.module';
 import { BadRequestProblem } from '@xavierdev25/rfc7807-errors';
+
+/**
+ * Baseline security response headers. Implemented inline (rather than pulling in
+ * an extra dependency) so the hardening ships with zero added supply-chain
+ * surface — consistent with the distroless production posture.
+ */
+function securityHeaders(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-DNS-Prefetch-Control', 'off');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.removeHeader('X-Powered-By');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader(
+      'Strict-Transport-Security',
+      'max-age=31536000; includeSubDomains',
+    );
+  }
+  next();
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -12,6 +39,10 @@ async function bootstrap() {
   });
 
   const logger = new Logger('Bootstrap');
+
+  // Disable the framework fingerprint header and apply baseline security headers.
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
+  app.use(securityHeaders);
 
   // Global validation pipe — transforms class-validator errors into RFC 7807
   app.useGlobalPipes(

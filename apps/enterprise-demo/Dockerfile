@@ -56,36 +56,22 @@ RUN cd libs/rfc7807-errors && pnpm build
 # Build the application
 RUN cd apps/enterprise-demo && pnpm build
 
-# Prune to production-only dependencies (CI=true avoids TTY prompt)
-# RUN CI=true pnpm prune --prod --no-optional --ignore-scripts
-
-# Aggressively strip unnecessary files from production node_modules
-# This saves ~30-40% of node_modules size
-# RUN find node_modules -type f \( \
-#         -name "*.md" -o -name "*.MD" \
-#         -o -name "*.ts" ! -name "*.d.ts" \
-#         -o -name "*.map" \
-#         -o -name "*.txt" -o -name "*.yml" -o -name "*.yaml" \
-#         -o -name "CHANGELOG*" -o -name "CHANGES*" \
-#         -o -name "LICENSE*" -o -name "LICENCE*" \
-#         -o -name "AUTHORS*" -o -name "CONTRIBUTORS*" \
-#         -o -name "HISTORY*" -o -name "NOTICE*" \
-#         -o -name ".npmignore" -o -name ".eslintrc*" \
-#         -o -name ".prettierrc*" -o -name "tsconfig*" \
-#         -o -name "Makefile" -o -name "Gruntfile*" \
-#         -o -name "Gulpfile*" -o -name ".travis.yml" \
-#         -o -name "appveyor.yml" -o -name ".editorconfig" \
-#     \) -delete 2>/dev/null; \
-#     find node_modules -type d \( \
-#         -name "test" -o -name "tests" -o -name "__tests__" \
-#         -o -name "docs" -o -name "doc" \
-#         -o -name "example" -o -name "examples" \
-#         -o -name ".github" \
-#     \) -exec rm -rf {} + 2>/dev/null; \
-#     true
+# Produce a self-contained, production-only deployment of the app.
+#
+# `pnpm prune --prod` does NOT work cleanly here: pnpm's node_modules is a tree
+# of symlinks into the virtual store, and copying that into distroless breaks
+# module resolution (Cannot find module '@nestjs/core'). `pnpm deploy` instead
+# materializes a flat, dependency-complete node_modules with ZERO
+# devDependencies and the workspace lib injected as real files — exactly what a
+# minimal runtime image needs.
+# --no-optional drops TypeORM's optional native drivers (better-sqlite3, sqlite3,
+# …) which this app never uses (it runs on `pg`, pure JS). That both avoids their
+# native build-script gate and trims the image.
+RUN pnpm --filter=@xavierdev25/enterprise-demo deploy \
+    --prod --legacy --no-optional /prod/app
 
 # ─── Stage 4: Production ─────────────────────────────────────────────────────
-# Google Distroless: ~130MB base, no shell, no package manager, zero CVEs
+# Google Distroless: ~130MB base, no shell, no package manager, minimal CVEs
 FROM gcr.io/distroless/nodejs20-debian12:nonroot AS production
 
 # Labels for container metadata
@@ -95,20 +81,8 @@ LABEL org.opencontainers.image.source="https://github.com/xavierdev25/nestjs-rfc
 
 WORKDIR /app
 
-# Copy production dependencies (already stripped of unnecessary files)
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/apps/enterprise-demo/node_modules ./apps/enterprise-demo/node_modules
-COPY --from=build /app/libs/rfc7807-errors/node_modules ./libs/rfc7807-errors/node_modules
-
-# Copy compiled artifacts only (no source TypeScript)
-COPY --from=build /app/libs/rfc7807-errors/dist ./libs/rfc7807-errors/dist
-COPY --from=build /app/libs/rfc7807-errors/package.json ./libs/rfc7807-errors/
-COPY --from=build /app/apps/enterprise-demo/dist ./apps/enterprise-demo/dist
-COPY --from=build /app/apps/enterprise-demo/package.json ./apps/enterprise-demo/
-
-# Copy workspace config (needed for pnpm workspace resolution)
-COPY --from=build /app/package.json ./
-COPY --from=build /app/pnpm-workspace.yaml ./
+# Copy the deployed app (its package root): dist + a flat prod-only node_modules.
+COPY --from=build /prod/app ./
 
 # Distroless already runs as nonroot (UID 65534)
 # No USER directive needed — it's the default
@@ -118,4 +92,4 @@ EXPOSE 3000
 
 # Distroless has no shell — use exec-form CMD only
 # Node.js in distroless handles signals natively (no dumb-init needed)
-CMD ["apps/enterprise-demo/dist/main.js"]
+CMD ["dist/main.js"]

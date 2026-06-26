@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 
@@ -12,12 +13,18 @@ export interface StoredResponse {
 }
 
 /**
- * Lock status for an idempotency key.
+ * Lua script for a safe lock release: deletes the key only if it still holds
+ * the token we acquired it with. Without this compare-and-delete, a slow
+ * request whose lock had already expired could delete a *different* request's
+ * freshly-acquired lock, breaking the mutual exclusion guarantee.
  */
-export enum LockStatus {
-  ACQUIRED = 'acquired',
-  ALREADY_LOCKED = 'already_locked',
-}
+const RELEASE_LOCK_SCRIPT = `
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('del', KEYS[1])
+else
+  return 0
+end
+`;
 
 /**
  * Service responsible for managing idempotency keys in Redis.
@@ -45,16 +52,20 @@ export class IdempotencyService {
    *
    * Uses Redis SET NX (set if not exists) with an expiration for atomicity.
    * The lock TTL is shorter than the response TTL to handle crashed processes.
+   * The stored value is a unique, per-acquisition token so the lock can only be
+   * released by its owner (see {@link releaseLock}).
    *
    * @param key - The scoped idempotency key
    * @param lockTtlSeconds - Lock expiration (default: 30s)
-   * @returns ACQUIRED if lock was obtained, ALREADY_LOCKED if another process holds it
+   * @returns The ownership token if the lock was obtained, or `null` if another
+   *          process currently holds it.
    */
-  async acquireLock(key: string, lockTtlSeconds = 30): Promise<LockStatus> {
+  async acquireLock(key: string, lockTtlSeconds = 30): Promise<string | null> {
     const lockKey = `${this.LOCK_PREFIX}${key}`;
+    const token = randomUUID();
     const result = await this.redis.set(
       lockKey,
-      'processing',
+      token,
       'EX',
       lockTtlSeconds,
       'NX',
@@ -62,20 +73,38 @@ export class IdempotencyService {
 
     if (result === 'OK') {
       this.logger.debug(`Lock acquired for idempotency key: ${key}`);
-      return LockStatus.ACQUIRED;
+      return token;
     }
 
     this.logger.debug(`Lock already held for idempotency key: ${key}`);
-    return LockStatus.ALREADY_LOCKED;
+    return null;
   }
 
   /**
-   * Releases the distributed lock for the given idempotency key.
+   * Releases the distributed lock for the given idempotency key, but only if it
+   * still holds the token we acquired it with (atomic compare-and-delete).
+   *
+   * @returns `true` if this owner's lock was released, `false` if the lock had
+   *          already expired / been taken over by another acquisition.
    */
-  async releaseLock(key: string): Promise<void> {
+  async releaseLock(key: string, token: string): Promise<boolean> {
     const lockKey = `${this.LOCK_PREFIX}${key}`;
-    await this.redis.del(lockKey);
-    this.logger.debug(`Lock released for idempotency key: ${key}`);
+    const released = (await this.redis.eval(
+      RELEASE_LOCK_SCRIPT,
+      1,
+      lockKey,
+      token,
+    )) as number;
+
+    if (released === 1) {
+      this.logger.debug(`Lock released for idempotency key: ${key}`);
+      return true;
+    }
+
+    this.logger.debug(
+      `Lock release skipped (not owner / already expired) for key: ${key}`,
+    );
+    return false;
   }
 
   /**
