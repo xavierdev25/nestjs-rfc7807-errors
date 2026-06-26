@@ -21,6 +21,7 @@ import { ProcessTransactionCommand } from '../../application/commands/process-tr
 import { GetTransactionQuery } from '../../application/queries/get-transaction/get-transaction.query';
 import { ListTransactionsQuery } from '../../application/queries/list-transactions/list-transactions.query';
 import { CurrentUser } from '../../../../shared/auth/decorators/current-user.decorator';
+import { Roles } from '../../../../shared/auth/decorators/roles.decorator';
 import { AuthenticatedUser } from '../../../../shared/auth/interfaces/jwt-payload.interface';
 import { Idempotent } from '../../../../shared/idempotency/idempotent.decorator';
 import {
@@ -100,8 +101,10 @@ export class TransactionController {
   /**
    * PATCH /transactions/:id/process
    * Processes a pending transaction. Requires X-Idempotency-Key header.
+   * Restricted to privileged roles (RBAC).
    */
   @Patch(':id/process')
+  @Roles('admin', 'operator')
   @Idempotent(86400)
   async process(
     @Param('id', ParseUUIDPipe) id: string,

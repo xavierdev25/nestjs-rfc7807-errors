@@ -1,0 +1,45 @@
+name: IaC - Terraform
+
+on:
+  push:
+    branches: [main]
+    paths: ['infra/terraform/**', '.github/workflows/infra.yml']
+  pull_request:
+    branches: [main]
+    paths: ['infra/terraform/**']
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: Validate & Plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.9.5'
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Init (no backend)
+        run: terraform init -backend=false
+
+      - name: Validate
+        run: terraform validate
+
+      # Plan only runs when AWS/Floci credentials are configured; never applies
+      # automatically. Apply is a gated, manual/release-time step.
+      - name: Plan
+        if: ${{ env.TF_PLAN_ENABLED == 'true' }}
+        env:
+          TF_PLAN_ENABLED: ${{ secrets.TF_PLAN_ENABLED }}
+        run: terraform plan -input=false

@@ -1,9 +1,16 @@
+import { join } from 'path';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 
 /**
  * Factory function for TypeORM configuration.
  * Reads connection parameters from environment variables via ConfigService.
+ *
+ * Schema management is migration-driven (`synchronize: false`): pending
+ * migrations — including the engine-level RLS provisioning — run automatically
+ * on boot (`migrationsRun: true`), so dev, test and prod share one deterministic
+ * source of truth. Tests additionally `dropSchema` first to start from scratch,
+ * which also exercises the migrations end to end on every run.
  */
 export const databaseConfig = (
   configService: ConfigService,
@@ -34,10 +41,12 @@ export const databaseConfig = (
     ),
     ssl: configService.get<string>('POSTGRES_SSL', 'false') === 'true',
     autoLoadEntities: true,
-    synchronize:
-      isTest ||
-      configService.get<string>('NODE_ENV', 'development') === 'development',
-    dropSchema: isTest, // Clean db completely on tests
+    // Versioned migrations are the single source of truth — never auto-sync.
+    synchronize: false,
+    migrationsRun: true,
+    // Resolves TS sources (ts-jest e2e) and compiled JS (built app) alike.
+    migrations: [join(__dirname, '..', 'migrations', '*.{ts,js}')],
+    dropSchema: isTest, // Tests start clean, then migrations rebuild everything
     logging:
       configService.get<string>('NODE_ENV', 'development') === 'development'
         ? ['error', 'warn', 'migration']

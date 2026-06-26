@@ -3,6 +3,7 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { AppModule } from './app.module';
 import { BadRequestProblem } from '@xavierdev25/rfc7807-errors';
+import { JsonLogger } from './shared/logging/json.logger';
 
 /**
  * Baseline security response headers. Implemented inline (rather than pulling in
@@ -31,11 +32,13 @@ function securityHeaders(
 }
 
 async function bootstrap() {
+  const isProduction = process.env.NODE_ENV === 'production';
   const app = await NestFactory.create(AppModule, {
-    logger:
-      process.env.NODE_ENV === 'production'
-        ? ['error', 'warn', 'log']
-        : ['error', 'warn', 'log', 'debug', 'verbose'],
+    // Structured JSON logs (with correlation IDs) in production for aggregation;
+    // human-friendly pretty logs in development.
+    logger: isProduction
+      ? new JsonLogger()
+      : ['error', 'warn', 'log', 'debug', 'verbose'],
   });
 
   const logger = new Logger('Bootstrap');

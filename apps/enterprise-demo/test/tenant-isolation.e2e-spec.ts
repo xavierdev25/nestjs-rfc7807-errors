@@ -27,21 +27,30 @@ describe('Tenant Isolation (e2e)', () => {
   const TENANT_B = '22222222-2222-2222-2222-222222222222';
   const USER_B = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 
-  const tokenFor = (tenantId: string, userId: string): string =>
+  const tokenFor = (
+    tenantId: string,
+    userId: string,
+    roles: string[] = ['user'],
+  ): string =>
     jwt.sign({
       sub: userId,
       tenantId,
       email: `${userId}@example.com`,
-      roles: ['user'],
+      roles,
     });
 
   // Redis is mocked: cache always misses, lock always acquired/released so the
-  // idempotency interceptor lets the request through to the database.
+  // idempotency interceptor lets the request through; rate-limit counters
+  // (incr/pexpire/pttl) are inert so they never throttle the suite.
   const redisMock = {
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue('OK'),
     del: jest.fn().mockResolvedValue(1),
     eval: jest.fn().mockResolvedValue(1),
+    incr: jest.fn().mockResolvedValue(1),
+    pexpire: jest.fn().mockResolvedValue(1),
+    pttl: jest.fn().mockResolvedValue(60000),
+    ping: jest.fn().mockResolvedValue('PONG'),
     on: jest.fn(),
     quit: jest.fn(),
   };
@@ -125,5 +134,41 @@ describe('Tenant Isolation (e2e)', () => {
 
   it('rejects unauthenticated access', async () => {
     await request(app.getHttpServer()).get('/transactions').expect(401);
+  });
+
+  // ─── RBAC (authorization) ──────────────────────────────────────────────
+  const SOME_UUID = '00000000-0000-0000-0000-0000000000ff';
+
+  it('forbids a "user" role from the admin-only process endpoint (403)', async () => {
+    await request(app.getHttpServer())
+      .patch(`/transactions/${SOME_UUID}/process`)
+      .set('Authorization', `Bearer ${tokenFor(TENANT_A, USER_A, ['user'])}`)
+      .expect(403);
+  });
+
+  it('lets an "admin" role past RBAC on the process endpoint', async () => {
+    // Passes RBAC, then the idempotency interceptor rejects the missing header
+    // (400) — proving authorization let it through rather than a 403.
+    await request(app.getHttpServer())
+      .patch(`/transactions/${SOME_UUID}/process`)
+      .set('Authorization', `Bearer ${tokenFor(TENANT_A, USER_A, ['admin'])}`)
+      .expect(400);
+  });
+
+  // ─── Health probes (public, unauthenticated) ───────────────────────────
+  it('exposes a public liveness probe', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/health/live')
+      .expect(200);
+    expect(res.body.status).toBe('ok');
+  });
+
+  it('reports readiness with DB + cache checks (DB is real Postgres)', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/health/ready')
+      .expect(200);
+    expect(res.body.status).toBe('up');
+    expect(res.body.checks.database.status).toBe('up');
+    expect(res.body.checks.cache.status).toBe('up');
   });
 });

@@ -4,7 +4,9 @@ import { RedisModule } from './redis/redis.module';
 import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './database/database.module';
 import { IdempotencyModule } from './idempotency/idempotency.module';
+import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { OutboxModule } from './outbox/outbox.module';
+import { HealthModule } from './health/health.module';
 
 /**
  * Shared module aggregating all cross-cutting concerns.
@@ -22,8 +24,10 @@ import { OutboxModule } from './outbox/outbox.module';
     RedisModule,
     DatabaseModule,
     AuthModule,
+    RateLimitModule,
     IdempotencyModule,
     OutboxModule,
+    HealthModule,
   ],
   exports: [
     RequestContextModule,

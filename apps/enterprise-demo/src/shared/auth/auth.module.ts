@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtStrategy } from './jwt.strategy';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { RolesGuard } from './roles.guard';
 import { jwtConfig } from '../../config/jwt.config';
 
 /**
@@ -23,9 +24,14 @@ import { jwtConfig } from '../../config/jwt.config';
   ],
   providers: [
     JwtStrategy,
+    // Order matters: JWT (authentication) runs first, then RBAC (authorization).
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
     },
   ],
   exports: [JwtModule],

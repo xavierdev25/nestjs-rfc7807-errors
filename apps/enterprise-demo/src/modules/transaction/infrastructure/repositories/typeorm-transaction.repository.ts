@@ -14,7 +14,8 @@ import { RequestContext } from '../../../../shared/context/request-context';
  * TypeORM implementation of the TransactionRepositoryPort.
  *
  * Tenant isolation is enforced in TWO layers (defense in depth):
- *  1. Engine: PostgreSQL Row Level Security policies (see RlsBootstrapService).
+ *  1. Engine: PostgreSQL Row Level Security policies (provisioned by the
+ *     TenantIsolationRls migration).
  *  2. Application: every read is also explicitly scoped to the current tenant
  *     below, so a missing/misconfigured policy can never silently leak rows.
  */
