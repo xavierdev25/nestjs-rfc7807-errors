@@ -74,6 +74,26 @@ En sistemas de alta concurrencia (ej. procesamiento de pagos), los reintentos au
 
 ---
 
+## 🔐 Seguridad de Aplicación y Plataforma
+
+Capas transversales aplicadas globalmente, todas emitiendo errores **RFC 7807** para un contrato uniforme.
+
+- **Autenticación (JWT) + RBAC.** Guard global de JWT (Passport) y, encima, un `RolesGuard` de autorización. Las rutas se restringen con `@Roles('admin', 'operator', …)`; un rol insuficiente recibe `403 ForbiddenProblem`. El orden de ejecución es authn → authz.
+
+- **Rate limiting distribuido (Redis).** Guard global respaldado por Redis (`INCR`+`PEXPIRE`) — **no** un contador en memoria, de modo que el límite es correcto entre todas las réplicas. Alcance por `ruta:tenant:usuario`, `429 TooManyRequestsProblem` con header `Retry-After` y `X-RateLimit-*`. Configurable por ruta (`@RateLimit`) o global (`RATE_LIMIT_MAX`/`RATE_LIMIT_WINDOW_MS`). **Falla en abierto**: una caída de Redis no tumba la API.
+
+- **Security headers.** Middleware sin dependencias (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, HSTS en prod, `x-powered-by` desactivado).
+
+- **Validación.** `class-validator` con `whitelist`+`forbidNonWhitelisted`; los fallos se transforman en `400 BadRequestProblem` con el detalle de `violations`.
+
+## 📈 Observabilidad
+
+- **Logs estructurados (JSON).** En producción, un `JsonLogger` emite una línea JSON por evento, enriquecida automáticamente con `correlationId`/`requestId`/`tenantId` desde AsyncLocalStorage — listo para agregadores (CloudWatch Logs / ELK / Loki). En desarrollo, logs legibles.
+
+- **Health probes.** `GET /health/live` (liveness) y `GET /health/ready` (readiness con chequeo real de **PostgreSQL + Redis**, `503` si alguna dependencia cae). Ambas públicas y exentas de rate limit para que los probes de orquestador/LB nunca se bloqueen.
+
+---
+
 ## ☁️ DevOps & Seguridad Cloud-Native
 
 ### Contenedores Multi-Stage y Distroless
@@ -100,9 +120,29 @@ Nuestros flujos de GitHub Actions están optimizados para velocidad y determinis
 
 El esquema **no** se autogenera en producción (`synchronize: false`). Las tablas, índices y **toda la provisión de RLS** (función, rol `rls_app`, políticas, grants) viven en migraciones TypeORM versionadas que corren automáticamente al arrancar (`migrationsRun: true`) y también vía CLI (`pnpm migration:run`). Los tests las ejercitan de cero en cada corrida (`dropSchema` + migraciones).
 
+### 🌐 API Gateway, Load Balancing y Escalado horizontal
+
+Un gateway **nginx** (`infra/gateway/nginx.conf`, overlay `docker-compose.gateway.yml`) actúa como borde delante de la app:
+
+- **Load balancing** round-robin entre N réplicas vía DNS de Docker (re-resolución por request) — verificado repartiendo tráfico entre 3 réplicas.
+- **Escalado horizontal:** `docker compose -f docker-compose.yml -f docker-compose.gateway.yml up -d --scale app=3`.
+- Rate limit de borde, security headers, gzip, headers de proxy (`X-Forwarded-*`, `X-Correlation-ID`) y **access-log JSON** con el correlation id.
+
+### 🏗️ Infraestructura como Código (Terraform)
+
+`infra/terraform/` define los recursos AWS de forma declarativa, apuntando a **Floci** localmente y a AWS real con una sola variable: cola SQS del outbox + **DLQ con redrive**, **Secrets Manager** (credenciales DB / secreto JWT) y **CloudWatch Logs**. CI de IaC en `infra.yml` (`fmt`/`validate`/`plan`); `apply` gated en el pipeline de CD.
+
 ### ✅ Estado de pruebas (verificado)
 
-- **135** pruebas unitarias en la librería + **135** en la app, en verde.
-- **E2E** contra PostgreSQL real, incluyendo un test de **aislamiento cross-tenant** que prueba que un tenant no puede leer datos de otro (y un `401` para no autenticados).
-- RLS verificado directamente en el motor bajo el rol `rls_app`: lectura cross-tenant = **0 filas**.
-- ESLint y Prettier sin errores.
+**Unitarias** (instalación limpia en contenedor Linux):
+- Librería: **135 / 135** ✅ · Aplicación: **149 / 149** (15 suites) ✅ — F.I.R.S.T.
+- ESLint **0 errores** · Prettier sin diferencias.
+
+**E2E** (Jest contra PostgreSQL real, esquema reconstruido por migraciones en cada corrida):
+- Aislamiento **cross-tenant** (un tenant no lee datos de otro), **RBAC** (`user`→403 / `admin`→ok), **readiness** (DB+Redis), `401` sin auth.
+
+**Integración en vivo** (stack completo en Docker contra **floci**, verificado de extremo a extremo):
+- RLS probado en el motor bajo el rol `rls_app`: lectura cross-tenant = **0 filas**.
+- Flujo **Outbox → SQS → NotificationConsumer** completo (3 eventos `PUBLISHED`, consumidos desde la cola real).
+- **Idempotencia** (misma key ⇒ mismo id + `X-Idempotent-Replayed`), **rate limit** exacto (100×`200` → `429` + `Retry-After`), **validación** RFC 7807.
+- **Gateway + load balancing**: 3 réplicas balanceadas round-robin tras nginx.

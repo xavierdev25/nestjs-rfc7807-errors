@@ -36,9 +36,9 @@ variable "environment" {
 }
 
 variable "outbox_queue_name" {
-  description = "Name of the Transactional Outbox SQS queue."
+  description = "Name of the Transactional Outbox SQS queue (matches floci-init and the SqsService default)."
   type        = string
-  default     = "local-outbox-queue"
+  default     = "domain-events"
 }
 
 variable "log_retention_days" {
