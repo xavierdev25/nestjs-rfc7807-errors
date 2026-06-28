@@ -12,7 +12,7 @@ resource "aws_sqs_queue" "outbox_dlq" {
 resource "aws_sqs_queue" "outbox" {
   name                       = var.outbox_queue_name
   visibility_timeout_seconds = 30
-  receive_wait_time_seconds  = 20 # enable long polling
+  receive_wait_time_seconds  = 20     # enable long polling
   message_retention_seconds  = 345600 # 4 days
 
   redrive_policy = jsonencode({
