@@ -67,7 +67,10 @@ jobs:
           cache: 'pnpm'
 
       - name: Install Dependencies
-        run: pnpm install --frozen-lockfile
+        # --ignore-scripts: no runtime native builds are needed (the app uses
+        # pure-JS pg; unused optional drivers/resolvers ship prebuilt). This also
+        # avoids pnpm 11's ERR_PNPM_IGNORED_BUILDS hard failure in CI.
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Security Scan
         # Fail the build on high/critical advisories; informational/low do not block.
