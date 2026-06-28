@@ -5,6 +5,7 @@
   "author": "Xavier Montaño",
   "private": true,
   "license": "MIT",
+  "packageManager": "pnpm@11.6.0",
   "pnpm": {
     "onlyBuiltDependencies": [
       "sqlite3"
