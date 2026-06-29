@@ -1,0 +1,69 @@
+# ==============================================================================
+# Docker Build Context Exclusions
+# Keep the build context lean for faster builds.
+# ==============================================================================
+
+# Version control
+.git
+.gitignore
+
+# Dependencies (reinstalled in container)
+node_modules
+**/node_modules
+
+# Build artifacts (rebuilt in container)
+dist
+**/dist
+coverage
+**/coverage
+
+# IDE & OS
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Environment files (secrets — never bake into images)
+.env
+.env.local
+.env.*.local
+
+# Docker files (prevent recursive builds)
+docker-compose*.yml
+**/Dockerfile
+
+# Documentation & meta
+*.md
+!README.md
+LICENSE
+.prettierrc
+eslint.config.mjs
+
+# Test artifacts
+**/__tests__
+**/*.spec.ts
+**/*.spec.js
+**/*.e2e-spec.ts
+**/test
+**/jest-e2e.json
+
+# CI/CD
+.github
+
+# Local infrastructure data
+infra/postgres/data
+infra/redis/data
+infra/floci/data
+
+# Gemini/IDE
+.gemini
+
+# TypeScript build cache
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Logs
+*.log
+logs

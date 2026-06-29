@@ -1,0 +1,99 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  ci:
+    name: Continuous Integration
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app_user
+          POSTGRES_PASSWORD: 'S3cur3P@ssw0rd!2026'
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # The app reads TEST_DB_* when NODE_ENV=test (see config/database.config.ts).
+      # These MUST match the postgres service credentials above.
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: 5432
+      TEST_DB_USER: app_user
+      TEST_DB_PASSWORD: 'S3cur3P@ssw0rd!2026'
+      TEST_DB_NAME: test_db
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      # SQS is mocked in the e2e; these are only for completeness.
+      AWS_ENDPOINT_URL: http://localhost:4566
+      SQS_QUEUE_URL: http://localhost:4566/000000000000/domain-events
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        # Version is read from the root package.json "packageManager" field
+        # (pnpm@11.6.0) so CI matches local and the lockfile that recorded the
+        # overrides — pnpm 9 misreads them (ERR_PNPM_LOCKFILE_CONFIG_MISMATCH).
+        uses: pnpm/action-setup@v3
+
+      - name: Setup Node.js v22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        # --ignore-scripts: no runtime native builds are needed (the app uses
+        # pure-JS pg; unused optional drivers/resolvers ship prebuilt). This also
+        # avoids pnpm 11's ERR_PNPM_IGNORED_BUILDS hard failure in CI.
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Security Scan
+        # Fail the build on high/critical advisories; informational/low do not block.
+        run: pnpm audit --audit-level high
+
+      - name: Lint Code
+        run: pnpm lint
+
+      - name: Check Formatting
+        # Using npx prettier --check to actually verify format instead of writing
+        run: npx prettier --check "{apps,libs}/**/src/**/*.ts"
+
+      - name: Run Tests with Coverage
+        run: pnpm test:cov
+
+      - name: Run E2E Tests
+        run: pnpm test:e2e
+        env:
+          NODE_ENV: test
+
+      - name: Build Monorepo
+        run: pnpm build

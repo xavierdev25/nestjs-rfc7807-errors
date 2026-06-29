@@ -1,0 +1,37 @@
+# ==============================================================================
+# Gateway / Load-Balancer overlay.
+#
+# Adds an nginx edge gateway in front of the app. Use it as a compose overlay:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gateway.yml up -d
+#   curl -i http://localhost:8080/health/live
+#
+# Horizontal scaling (the nginx config already round-robins across replicas via
+# Docker DNS): in docker-compose.yml remove the app service's `container_name`
+# and its host `ports` mapping (so replicas don't collide), then:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gateway.yml \
+#     up -d --scale app=3
+#
+# Only the gateway publishes a host port; the app is reached exclusively through
+# it, which is the realistic edge topology.
+# ==============================================================================
+
+services:
+  gateway:
+    image: nginx:alpine
+    container_name: enterprise-gateway
+    depends_on:
+      - app
+    ports:
+      - '${GATEWAY_PORT:-8080}:80'
+    volumes:
+      - ./infra/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - enterprise-net
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost/health/live']
+      interval: 15s
+      timeout: 5s
+      retries: 3

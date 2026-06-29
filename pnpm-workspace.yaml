@@ -1,2 +1,10 @@
-allowBuilds:
-  unrs-resolver: set this to true or false
+packages:
+  - 'apps/*'
+  - 'libs/*'
+
+# Force the patched multer (advisory GHSA-72gw-mp4g-v24j, DoS via deeply nested
+# field names; fixed in 2.2.0). It is pulled transitively by
+# @nestjs/platform-express; this override lifts every path to the safe version
+# so `pnpm audit --audit-level high` passes.
+overrides:
+  multer: '>=2.2.0'

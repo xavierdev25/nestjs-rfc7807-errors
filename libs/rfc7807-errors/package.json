@@ -1,0 +1,70 @@
+{
+  "name": "@xavierdev25/rfc7807-errors",
+  "version": "0.1.0",
+  "description": "NestJS global exception filter implementing RFC 7807 Problem Details for HTTP APIs",
+  "author": "Xavier Montaño",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*"
+  ],
+  "keywords": [
+    "nestjs",
+    "rfc7807",
+    "problem-details",
+    "exception-filter",
+    "error-handling",
+    "http-api",
+    "application/problem+json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xavierdev25/nestjs-rfc7807-errors",
+    "directory": "libs/rfc7807-errors"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
+    "prepublishOnly": "pnpm build"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^10.0.0 || ^11.0.0",
+    "@nestjs/core": "^10.0.0 || ^11.0.0",
+    "rxjs": "^7.0.0"
+  },
+  "jest": {
+    "moduleFileExtensions": ["js", "json", "ts"],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.ts$": "ts-jest"
+    },
+    "collectCoverageFrom": [
+      "**/*.ts",
+      "!**/*.d.ts",
+      "!**/index.ts",
+      "!**/__tests__/**"
+    ],
+    "coveragePathIgnorePatterns": [
+      "dist/",
+      "node_modules/",
+      ".*\\.spec\\.ts$"
+    ],
+    "coverageDirectory": "../coverage",
+    "coverageThreshold": {
+      "global": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    },
+    "testEnvironment": "node"
+  }
+}

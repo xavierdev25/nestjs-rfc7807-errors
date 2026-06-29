@@ -1,0 +1,69 @@
+{
+  "name": "@xavierdev25/enterprise-demo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Enterprise demo application for rfc7807-errors library",
+  "license": "MIT",
+  "scripts": {
+    "build": "nest build --path tsconfig.app.json",
+    "start": "nest start --path tsconfig.app.json",
+    "start:dev": "nest start --watch --path tsconfig.app.json",
+    "start:debug": "nest start --debug --watch --path tsconfig.app.json",
+    "start:prod": "node dist/main",
+    "typeorm": "typeorm-ts-node-commonjs -d ./src/config/data-source.ts",
+    "migration:run": "typeorm-ts-node-commonjs migration:run -d ./src/config/data-source.ts",
+    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d ./src/config/data-source.ts",
+    "migration:show": "typeorm-ts-node-commonjs migration:show -d ./src/config/data-source.ts",
+    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d ./src/config/data-source.ts",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
+    "test:e2e": "jest --config ./test/jest-e2e.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.1073.0",
+    "@nestjs/common": "^11.1.27",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/core": "^11.1.27",
+    "@nestjs/cqrs": "^11.0.3",
+    "@nestjs/jwt": "^11.0.2",
+    "@nestjs/passport": "^11.0.5",
+    "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/schedule": "^6.1.3",
+    "@nestjs/typeorm": "^11.0.2",
+    "@xavierdev25/rfc7807-errors": "workspace:*",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "ioredis": "^5.11.1",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "pg": "^8.22.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "sqs-consumer": "^15.0.2",
+    "typeorm": "^1.0.0",
+    "uuid": "^14.0.0"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "moduleNameMapper": {
+      "^@xavierdev25/rfc7807-errors(.*)$": "<rootDir>/../../../libs/rfc7807-errors/src$1"
+    },
+    "collectCoverageFrom": [
+      "**/*.(t|j)s",
+      "!**/node_modules/**",
+      "!**/__tests__/**"
+    ],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node"
+  }
+}

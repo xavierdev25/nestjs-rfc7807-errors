@@ -1,0 +1,57 @@
+name: CD - Publish Library
+
+# Publishes @xavierdev25/rfc7807-errors to the public npm registry.
+#
+# Trigger: push a version tag (e.g. `git tag v0.1.0 && git push --tags`) or run
+# manually. Publishing on a tag (not every push to main) avoids "version already
+# exists" failures — bump the version in libs/rfc7807-errors/package.json, then tag.
+#
+# Required once: create an npm "Automation" access token and add it as the
+# GitHub repository secret `NPM_TOKEN` (Settings → Secrets → Actions). The token
+# value is never stored in the repo.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish rfc7807-errors
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        # Version comes from the root package.json "packageManager" field.
+        uses: pnpm/action-setup@v3
+
+      - name: Setup Node.js v22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # Quality gate: never publish a red build.
+      - name: Test Library
+        run: pnpm --filter @xavierdev25/rfc7807-errors test
+
+      - name: Build Library
+        run: pnpm build:lib
+
+      # Sanity dry-run first, then the real publish.
+      - name: Pack (dry run)
+        run: pnpm --filter @xavierdev25/rfc7807-errors publish --dry-run --no-git-checks
+
+      - name: Publish to npm
+        run: pnpm --filter @xavierdev25/rfc7807-errors publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
