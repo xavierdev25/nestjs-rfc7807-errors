@@ -1,6 +1,6 @@
 {
   "name": "@xavierdev25/rfc7807-errors",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "NestJS global exception filter implementing RFC 7807 Problem Details for HTTP APIs",
   "author": "Xavier Montaño",
   "license": "MIT",

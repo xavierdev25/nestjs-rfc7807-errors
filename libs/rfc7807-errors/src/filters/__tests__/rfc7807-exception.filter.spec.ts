@@ -385,4 +385,63 @@ describe('Rfc7807ExceptionFilter', () => {
       );
     });
   });
+
+  describe('database error mapping', () => {
+    it('maps a PostgreSQL unique violation (23505) to 409', () => {
+      const dbError = {
+        code: '23505',
+        severity: 'ERROR',
+        constraint: 'uq_email',
+      };
+
+      filter.catch(dbError, mockHost);
+
+      expect(mockResponse.status).toHaveBeenCalledWith(409);
+      const sentBody = JSON.parse(mockResponse.send.mock.calls[0][0]);
+      expect(sentBody.title).toBe('Conflict');
+      expect(sentBody.instance).toBe('/api/v1/test');
+    });
+
+    it('falls back to 500 when databaseErrors is disabled', () => {
+      const f = new Rfc7807ExceptionFilter(undefined, {
+        databaseErrors: false,
+      });
+
+      f.catch({ code: '23505', severity: 'ERROR' }, mockHost);
+
+      expect(mockResponse.status).toHaveBeenCalledWith(500);
+    });
+  });
+
+  describe('custom mappers (Chain of Responsibility)', () => {
+    it('applies a custom mapper before the built-ins and backfills instance', () => {
+      const teapotMapper = {
+        map: (exception: unknown) =>
+          exception instanceof RangeError
+            ? { type: 'about:blank', title: "I'm a teapot", status: 418 }
+            : null,
+      };
+      const f = new Rfc7807ExceptionFilter(undefined, {
+        mappers: [teapotMapper],
+      });
+
+      f.catch(new RangeError('out of range'), mockHost);
+
+      expect(mockResponse.status).toHaveBeenCalledWith(418);
+      const sentBody = JSON.parse(mockResponse.send.mock.calls[0][0]);
+      expect(sentBody.title).toBe("I'm a teapot");
+      expect(sentBody.instance).toBe('/api/v1/test');
+    });
+
+    it('falls through to built-ins when a custom mapper returns null', () => {
+      const noopMapper = { map: () => null };
+      const f = new Rfc7807ExceptionFilter(undefined, {
+        mappers: [noopMapper],
+      });
+
+      f.catch(new NotFoundProblem({ detail: 'x' }), mockHost);
+
+      expect(mockResponse.status).toHaveBeenCalledWith(404);
+    });
+  });
 });

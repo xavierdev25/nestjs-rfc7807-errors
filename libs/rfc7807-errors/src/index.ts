@@ -18,6 +18,8 @@ export { RFC7807_OPTIONS, RFC7807_SERIALIZER } from './constants';
 export {
   IProblemDetail,
   IProblemDetailSerializer,
+  ExceptionMapper,
+  ExceptionMappingContext,
   Rfc7807ModuleOptions,
   Rfc7807ModuleAsyncOptions,
   Rfc7807OptionsFactory,
@@ -43,3 +45,14 @@ export { JsonProblemDetailSerializer } from './serializers';
 
 // Filters
 export { Rfc7807ExceptionFilter } from './filters';
+
+// Mappers (database driver errors → RFC 7807)
+export { DatabaseExceptionMapper } from './mappers';
+
+// Validation (class-validator → RFC 7807 BadRequestProblem)
+export {
+  rfc7807ValidationExceptionFactory,
+  flattenValidationErrors,
+  ValidationErrorLike,
+  ValidationViolation,
+} from './validation';

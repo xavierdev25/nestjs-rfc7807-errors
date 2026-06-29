@@ -14,6 +14,11 @@ import { ProblemDetailException } from '../exceptions/problem-detail.exception';
 import { IProblemDetail } from '../interfaces/problem-detail.interface';
 import { IProblemDetailSerializer } from '../interfaces/problem-detail-serializer.interface';
 import { Rfc7807ModuleOptions } from '../interfaces/rfc7807-module-options.interface';
+import {
+  ExceptionMapper,
+  ExceptionMappingContext,
+} from '../interfaces/exception-mapper.interface';
+import { DatabaseExceptionMapper } from '../mappers/database-exception.mapper';
 import { JsonProblemDetailSerializer } from '../serializers/json-problem-detail.serializer';
 
 /**
@@ -54,6 +59,10 @@ const HTTP_STATUS_TITLES: Record<number, string> = {
 export class Rfc7807ExceptionFilter implements ExceptionFilter {
   private readonly serializer: IProblemDetailSerializer;
   private readonly options: Rfc7807ModuleOptions;
+  /** User-provided mappers, tried before the built-ins (Open/Closed). */
+  private readonly userMappers: ExceptionMapper[];
+  /** Built-in DB→HTTP mapper; null when disabled via `databaseErrors: false`. */
+  private readonly databaseMapper: DatabaseExceptionMapper | null;
 
   constructor(
     @Optional()
@@ -65,6 +74,11 @@ export class Rfc7807ExceptionFilter implements ExceptionFilter {
   ) {
     this.serializer = serializer ?? new JsonProblemDetailSerializer();
     this.options = options ?? {};
+    this.userMappers = this.options.mappers ?? [];
+    this.databaseMapper =
+      this.options.databaseErrors === false
+        ? null
+        : new DatabaseExceptionMapper();
   }
 
   /**
@@ -101,18 +115,31 @@ export class Rfc7807ExceptionFilter implements ExceptionFilter {
   }
 
   /**
-   * Builds an IProblemDetail from the caught exception.
-   *
-   * Strategy:
-   * 1. ProblemDetailException: use toProblemDetail() directly
-   * 2. HttpException: extract status/message, map to RFC 7807
-   * 3. Unknown: generic 500 with masked detail in production
+   * Builds an IProblemDetail from the caught exception via an ordered chain:
+   *   0. User-provided mappers (can override built-ins)
+   *   1. Our own ProblemDetailException
+   *   2. NestJS HttpException (incl. class-validator pipe output)
+   *   3. Database driver errors (TypeORM/Prisma/PostgreSQL)
+   *   4. Fallback: generic 500 with masked detail in production
    */
   private buildProblemDetail(
     exception: unknown,
     request: Request,
   ): IProblemDetail {
-    // Scenario 1: Our own ProblemDetailException
+    const context: ExceptionMappingContext = {
+      instance: request.url,
+      isProduction: process.env.NODE_ENV === 'production',
+    };
+
+    // 0. User mappers first, so consumers can override any built-in behavior.
+    for (const mapper of this.userMappers) {
+      const mapped = mapper.map(exception, context);
+      if (mapped) {
+        return this.finalize(mapped, context);
+      }
+    }
+
+    // 1. Our own ProblemDetailException
     if (exception instanceof ProblemDetailException) {
       const problem = exception.toProblemDetail();
       if (!problem.instance) {
@@ -121,13 +148,32 @@ export class Rfc7807ExceptionFilter implements ExceptionFilter {
       return this.applyTypeBaseUri(problem);
     }
 
-    // Scenario 2: NestJS built-in HttpException
+    // 2. NestJS built-in HttpException
     if (exception instanceof HttpException) {
       return this.fromHttpException(exception, request);
     }
 
-    // Scenario 3: Unknown error — masked 500
+    // 3. Database driver errors → meaningful HTTP status
+    if (this.databaseMapper) {
+      const mapped = this.databaseMapper.map(exception, context);
+      if (mapped) {
+        return this.finalize(mapped, context);
+      }
+    }
+
+    // 4. Unknown error — masked 500
     return this.fromUnknownError(exception, request);
+  }
+
+  /** Backfills `instance` and applies the configured type base URI. */
+  private finalize(
+    problem: IProblemDetail,
+    context: ExceptionMappingContext,
+  ): IProblemDetail {
+    if (!problem.instance && context.instance) {
+      problem.instance = context.instance;
+    }
+    return this.applyTypeBaseUri(problem);
   }
 
   /**
