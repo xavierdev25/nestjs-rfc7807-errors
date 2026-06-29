@@ -7,6 +7,7 @@ import {
   JwtPayload,
 } from './interfaces/jwt-payload.interface';
 import { RequestContext } from '../context/request-context';
+import { DEV_JWT_SECRET, requireSecret } from '../../config/secret.util';
 
 /**
  * Passport JWT Strategy.
@@ -20,9 +21,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>(
+      secretOrKey: requireSecret(
+        configService.get<string>('JWT_SECRET'),
         'JWT_SECRET',
-        'your-super-secret-jwt-key-change-in-production-2026',
+        DEV_JWT_SECRET,
       ),
     });
   }

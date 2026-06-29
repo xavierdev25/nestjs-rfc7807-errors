@@ -1,6 +1,7 @@
 import { join } from 'path';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
+import { DEV_DB_PASSWORD, requireSecret } from './secret.util';
 
 /**
  * Factory function for TypeORM configuration.
@@ -35,9 +36,12 @@ export const databaseConfig = (
       isTest ? 'TEST_DB_USER' : 'POSTGRES_USER',
       'app_user',
     ),
-    password: configService.get<string>(
+    password: requireSecret(
+      configService.get<string>(
+        isTest ? 'TEST_DB_PASSWORD' : 'POSTGRES_PASSWORD',
+      ),
       isTest ? 'TEST_DB_PASSWORD' : 'POSTGRES_PASSWORD',
-      'S3cur3P@ssw0rd!2026',
+      DEV_DB_PASSWORD,
     ),
     ssl: configService.get<string>('POSTGRES_SSL', 'false') === 'true',
     autoLoadEntities: true,

@@ -1,5 +1,6 @@
 import { join } from 'path';
 import { DataSource } from 'typeorm';
+import { DEV_DB_PASSWORD, requireSecret } from './secret.util';
 
 /**
  * Standalone TypeORM DataSource used by the TypeORM CLI
@@ -16,10 +17,11 @@ export const AppDataSource = new DataSource({
   host: process.env.PGHOST ?? process.env.POSTGRES_HOST ?? 'localhost',
   port: Number(process.env.PGPORT ?? process.env.POSTGRES_PORT ?? 5432),
   username: process.env.PGUSER ?? process.env.POSTGRES_USER ?? 'app_user',
-  password:
-    process.env.PGPASSWORD ??
-    process.env.POSTGRES_PASSWORD ??
-    'S3cur3P@ssw0rd!2026',
+  password: requireSecret(
+    process.env.PGPASSWORD ?? process.env.POSTGRES_PASSWORD,
+    'POSTGRES_PASSWORD',
+    DEV_DB_PASSWORD,
+  ),
   database:
     process.env.PGDATABASE ?? process.env.POSTGRES_DB ?? 'enterprise_demo',
   // Globs resolve both the TS sources (ts-node CLI) and compiled JS (dist).
