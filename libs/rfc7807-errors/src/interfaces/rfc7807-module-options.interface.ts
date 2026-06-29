@@ -1,6 +1,7 @@
 import { ModuleMetadata, Type } from '@nestjs/common';
 import { IProblemDetail } from './problem-detail.interface';
 import { IProblemDetailSerializer } from './problem-detail-serializer.interface';
+import { ExceptionMapper } from './exception-mapper.interface';
 
 /**
  * Configuration options for the Rfc7807Module.
@@ -11,6 +12,21 @@ export interface Rfc7807ModuleOptions {
    * Defaults to JsonProblemDetailSerializer if not provided.
    */
   serializer?: IProblemDetailSerializer;
+
+  /**
+   * Additional exception mappers, tried (in order) BEFORE the built-in ones.
+   * Use this to support any error source — other ORMs, gRPC, third-party
+   * SDKs — without modifying the library (Open/Closed).
+   */
+  mappers?: ExceptionMapper[];
+
+  /**
+   * Translate database driver errors (PostgreSQL / TypeORM / Prisma) into the
+   * proper HTTP status (e.g. unique violation → 409). Sensitive driver detail
+   * is masked in production.
+   * @default true
+   */
+  databaseErrors?: boolean;
 
   /**
    * Whether to include the stack trace in error responses.

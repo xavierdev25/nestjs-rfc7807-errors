@@ -1,6 +1,10 @@
 export { IProblemDetail } from './problem-detail.interface';
 export { IProblemDetailSerializer } from './problem-detail-serializer.interface';
 export {
+  ExceptionMapper,
+  ExceptionMappingContext,
+} from './exception-mapper.interface';
+export {
   Rfc7807ModuleOptions,
   Rfc7807ModuleAsyncOptions,
   Rfc7807OptionsFactory,

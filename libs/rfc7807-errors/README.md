@@ -105,19 +105,80 @@ Rfc7807Module.forRootAsync({
 
 `useClass` and `useExisting` (via `Rfc7807OptionsFactory`) are also supported.
 
-## What the filter handles
+## Automatic database error mapping
 
-1. **`ProblemDetailException`** (yours) → serialized as-is via `toProblemDetail()`.
-2. **NestJS `HttpException`** → mapped to RFC 7807 (validation arrays become an `errors` member).
-3. **Anything else** → `500`, with the detail **masked** in production to avoid leaking internals.
+Database driver errors are translated to a **meaningful HTTP status** out of the
+box — no `try/catch` in your controllers. It's **dependency-free** (detection is
+by error shape/code), so it works whether you use **TypeORM**, **Prisma**, or the
+raw **`pg`** driver. Sensitive driver detail (constraint/column/message) is
+**masked in production** and only attached (under a `dbError` member) outside it.
+
+| Source | Code | → Problem |
+| --- | --- | --- |
+| PostgreSQL | `23505` unique_violation | `409 Conflict` |
+| PostgreSQL | `23503` foreign_key_violation | `409 Conflict` |
+| PostgreSQL | `23502` not_null_violation | `422 Unprocessable Entity` |
+| PostgreSQL | `22P02` invalid_text_representation | `400 Bad Request` |
+| Prisma | `P2002` unique | `409` · `P2025` not found → `404` · `P2003` FK → `409` |
+
+Enabled by default; disable with `databaseErrors: false`.
+
+## Validation errors (class-validator)
+
+Drop the provided `exceptionFactory` into NestJS's `ValidationPipe` and every
+class-validator failure becomes a `400 BadRequestProblem` with a structured
+`violations` array (field, constraints, value — nested DTOs flattened to a
+dot-path):
+
+```ts
+import { ValidationPipe } from '@nestjs/common';
+import { rfc7807ValidationExceptionFactory } from '@xavierdev25/rfc7807-errors';
+
+app.useGlobalPipes(
+  new ValidationPipe({
+    whitelist: true,
+    transform: true,
+    exceptionFactory: rfc7807ValidationExceptionFactory,
+  }),
+);
+```
+
+## Custom mappers (extend to any error source)
+
+Need to map errors from gRPC, a third-party SDK, or another ORM? Implement
+`ExceptionMapper` and register it — it runs **before** the built-ins, so you can
+also override them (Open/Closed, no fork required):
+
+```ts
+import { ExceptionMapper } from '@xavierdev25/rfc7807-errors';
+
+const stripeMapper: ExceptionMapper = {
+  map: (e) =>
+    e?.constructor?.name === 'StripeCardError'
+      ? { type: 'about:blank', title: 'Payment Required', status: 402 }
+      : null, // null → defer to the next mapper
+};
+
+Rfc7807Module.forRoot({ mappers: [stripeMapper] });
+```
+
+## What the filter handles (in order)
+
+1. **Custom `mappers`** (yours) → run first; can override any built-in.
+2. **`ProblemDetailException`** (yours) → serialized as-is via `toProblemDetail()`.
+3. **NestJS `HttpException`** → mapped to RFC 7807 (validation arrays become an `errors` member).
+4. **Database driver errors** (TypeORM/Prisma/PostgreSQL) → proper status (409/422/…).
+5. **Anything else** → `500`, with the detail **masked** in production to avoid leaking internals.
 
 ## Options
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `typeBaseUri` | `string` | `'about:blank'` | Prefix for the `type` URI (`{base}/{slug}`). |
+| `databaseErrors` | `boolean` | `true` | Map DB driver errors (TypeORM/Prisma/PG) to HTTP statuses. |
+| `mappers` | `ExceptionMapper[]` | `[]` | Custom mappers, tried before the built-ins. |
 | `includeStackTrace` | `boolean` | `false` | Add `stackTrace` to the body (never in production). |
-| `onProblem` | `(problem, exception) => void` | – | Side-effect hook (logging/metrics). |
+| `onProblem` | `(problem, exception) => void` | – | Side-effect hook (logging/metrics/error tracking, e.g. Sentry). |
 | `serializer` | `IProblemDetailSerializer` | `JsonProblemDetailSerializer` | Custom output serializer (DIP). |
 
 Content type: **`application/problem+json`**. See [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
