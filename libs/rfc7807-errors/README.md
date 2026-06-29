@@ -1,6 +1,10 @@
 # @xavierdev25/rfc7807-errors
 
-> Global NestJS exception filter implementing **RFC 7807 Problem Details** (`application/problem+json`) for HTTP APIs.
+[![npm version](https://img.shields.io/npm/v/@xavierdev25/rfc7807-errors.svg)](https://www.npmjs.com/package/@xavierdev25/rfc7807-errors)
+[![npm downloads](https://img.shields.io/npm/dm/@xavierdev25/rfc7807-errors.svg)](https://www.npmjs.com/package/@xavierdev25/rfc7807-errors)
+[![license](https://img.shields.io/npm/l/@xavierdev25/rfc7807-errors.svg)](./LICENSE)
+
+> Global NestJS exception engine implementing **RFC 7807 Problem Details** (`application/problem+json`) — generic, validation, and **database** errors, automatically.
 
 Turns every error your API throws — your own domain errors, NestJS `HttpException`s, and unexpected crashes — into a single, standard, machine-readable error shape:
 
